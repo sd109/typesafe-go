@@ -1,0 +1,6 @@
+# Agent working dir
+.agent/
+
+# Test stuff
+scratchpad/
+file.txt
