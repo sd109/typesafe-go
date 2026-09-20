@@ -1,32 +1,188 @@
 # kubectl-qlog
 
-A `kubectl` plugin for asking TypeSafe natural language questions
-about a set of pod logs.
+`kubectl-qlog` is a native Kubernetes CLI plugin for asking TypeSafe
+natural-language questions about pod logs.
 
-## Usage
+## Motivation
+
+Not all applications use the same log format so a simple string search
+for `error` in a log aggregation platform rarely shows you what you're
+looking for immediately. Narrowing down the initial search space with
+natural language questions can save a lot of time.
+
+For example, you might query a misbehaving Kubernetes cluster's
+`kube-system` logs to obtain general error classifications as an
+initial triage step when trying to track down a source of
+misbehaviour:
 
 ```sh
-kubectl qlog -n kube-system --all-pods \
-  --noul "Do these logs contain any errors?" \
-  --score "Is this pod logging at [debug, info, warn, error] level?" \
-  --choice "Is this pod concerned with {storage, networking, compute, other}?"
+kubectl qlog -n kube-system --all-pods --tail 50 \
+  --choice "Do these logs contain {networking, storage, rbac, none} errors?"
 ```
 
-## Limitations
+which produces:
 
-### Context Length
+```
+┌────────────────────────────────────────────┬────────────┬────────────┐
+│                  RESOURCE                  │   VALUE    │ CONFIDENCE │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ coredns-7d764666f9-j4xvw                   │ none       │ 0.9900     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ coredns-7d764666f9-n8hfh                   │ none       │ 0.9900     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ etcd-kind-control-plane                    │ none       │ 0.9900     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ kindnet-6b6bz                              │ none       │ 0.9800     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ kube-apiserver-kind-control-plane          │ none       │ 0.9700     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ kube-controller-manager-kind-control-plane │ none       │ 0.9400     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ kube-proxy-j2c9s                           │ networking │ 0.6600     │
+├────────────────────────────────────────────┼────────────┼────────────┤
+│ kube-scheduler-kind-control-plane          │ rbac       │ 0.9900     │
+└────────────────────────────────────────────┴────────────┴────────────┘
+```
 
-TypeSafe's current `jev-latest` model has a context length limit of
-32k tokens, including input content and questions. The TypeSafe API
-return a `max_tokens_exceeded` HTTP 400 error for requests exceeding
-this limit.
+More complex examples are provided below.
 
-The `qlog` plugin sends each pod's logs as a separate request but
-explicitly avoids context manipulation (e.g. splitting a pod's logs
-into smaller batches) since the original question may not make sense
-when applied to batched subsets of a logs.
+## Install
 
-Instead, `qlog` supports existing `kubectl` log filtering flags
-including `--tail`, `--since`, `--since-time` and `--limit-bytes`. The
-caller should use these flags to ensure the volume of logs sent to the
-TypeSafe API does not exceed the target model's context length limit.
+```sh
+go install github.com/sd109/typesafe-go/cmd/kubectl-qlog@latest
+```
+
+Put the resulting `kubectl-qlog` binary on `PATH`. Kubernetes
+discovers it as:
+
+```sh
+kubectl qlog --help
+```
+
+TypeSafe authentication and endpoint configuration use the SDK
+environment variables:
+
+```sh
+export TYPESAFE_API_KEY=...
+# Optional:
+export TYPESAFE_BASE_URL=...
+export TYPESAFE_DEFAULT_MODEL=jev-latest
+```
+
+The plugin uses the active kubeconfig context by default. Standard
+kubeconfig, context, TLS, token, and exec-credential flags are
+available, including `--kubeconfig`, `--context`, and `--namespace`.
+
+## Selection
+
+A command must select either explicit resources or all pods:
+
+```sh
+# A bare name means pod/<name>.
+kubectl qlog -n payments api-0 pod/api-1 \
+  --noul "Do these logs contain errors?"
+
+# Resolve all pods owned by the Deployment.
+kubectl qlog -n payments deployment/api \
+  --score "What is the severity? [debug, info, warn, error]"
+
+# Resolve all pods in one namespace.
+kubectl qlog -n payments --all-pods \
+  --choice "What subsystem is this? {storage, networking, compute, other}"
+
+# Resolve multiple resources across any namespace.
+kubectl qlog -A deployment/local-path-provisioner pod/etcd-kind-control-plane \
+  --noul "Does this pod require attention?"
+
+# Resolve all pods in all namespaces.
+kubectl qlog -A --all-pods \
+  --noul "Does this pod require attention?"
+```
+
+Standard resource aliases (e.g. `statefulset`, `statefulsets`, `sts`)
+are supported.
+
+## Questions
+
+Question flags are repeatable:
+
+- `--noul QUESTION` asks a yes/no question.
+- `--choice QUESTION` asks for one value from a
+  `{comma-separated, list}`.
+- `--score QUESTION` asks for an ordered score from a
+  `[low, medium, high]` rubric.
+
+At least one question is required unless `--dry-run` is used.
+
+## Log options
+
+The plugin fetches finite log snapshots using these options:
+
+```text
+--since DURATION
+--since-time RFC3339
+--tail LINES
+-c, --container NAME
+--all-containers
+```
+
+`--since` and `--since-time` are mutually exclusive. `--tail` defaults
+to `-1` (all available lines). `--container` and `--all-containers`
+are mutually exclusive.
+
+Without `--container`, qlog honors the
+`kubectl.kubernetes.io/default-container` annotation when valid, then
+selects the first regular container. `--all-containers` fetches init,
+regular, and ephemeral containers in that order.
+
+Each pod produces one TypeSafe request. The state is a JSON object
+with one entry per selected container:
+
+```json
+{
+  "namespace": "payments",
+  "resource": "pod/api-0",
+  "containers": [
+    {
+      "name": "api",
+      "type": "regular",
+      "image": "example/api:v1",
+      "logs": "complete log content"
+    }
+  ]
+}
+```
+
+Container logs are fetched sequentially within a pod. The
+`--parallelism N` flag controls how many pod pipelines may run
+concurrently; it defaults to `4`.
+
+### Dry run
+
+`--dry-run` resolves and validates the selected pods and containers
+without fetching logs, constructing a TypeSafe client, or making
+TypeSafe requests. Questions are optional:
+
+```sh
+kubectl qlog -n payments deployment/api --all-containers --dry-run -o json
+```
+
+Dry-run JSON contains `{namespace, resource, containers}` with each
+container's `name`, `type`, and `image`; it never includes a `logs`
+field. Dry-run table output contains `Namespace`, `Resource`, and
+`Containers` columns, showing the pod name without `pod/` and
+container names only.
+
+## Errors and limits
+
+Kubernetes resolution, log-stream, TypeSafe, cancellation,
+malformed-response, and output errors produce a non-zero exit status.
+TypeSafe requests are issued only after all target pods have been
+resolved.
+
+TypeSafe's current `jev-latest` model has a 32k-token context limit,
+including questions and container metadata. qlog does not split or
+otherwise manipulate logs. Use `--tail`, `--since`, or `--since-time`
+to keep each pod's selected logs within the model limit. With
+`--all-containers`, filters apply independently to each container
+stream, so the combined request can still be large.

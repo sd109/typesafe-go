@@ -7,8 +7,6 @@ in Go.
 
 A grep-like CLI for asking natural language questions.
 
-### Usage
-
 ```sh
 cat << EOF > file.txt
 # Meeting 2000-01-01
@@ -26,6 +24,19 @@ cat file.txt | qgrep \
 
 See [`cmd/README.md`](cmd/README.md) for installation, syntax, and
 output formats.
+
+## Kubectl Plugin (qlog)
+
+Ask TypeSafe questions about Kubernetes pod logs:
+
+```sh
+kubectl qlog -n payments deployment/api \
+  --noul "Do these logs contain RBAC errors?" \
+  --tail 500
+```
+
+See [`cmd/kubectl-qlog/README.md`](cmd/kubectl-qlog/README.md) for
+motivation, use cases and detailed documentation.
 
 ## SDK
 
