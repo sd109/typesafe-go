@@ -1,6 +1,31 @@
 ## TypeSafe Go
 
-A collection of TypeSafe API utilities written in Go.
+A collection of [TypeSafe](https://typesafe.ai) API utilities written
+in Go.
+
+## CLI (qgrep)
+
+A grep-like CLI for asking natural language questions.
+
+### Usage
+
+```sh
+cat << EOF > file.txt
+# Meeting 2000-01-01
+
+Attendees: Alice, Bob
+
+Discussing Bob's new house in Antarctica.
+EOF
+
+cat file.txt | qgrep \
+  --noul "Does this file contain personal information?" \
+  --choice "Is this file an {application log, meeting note, other}?" \
+  --score "Is the information in this file older than [1 day, 1 week, 1 year]?"
+```
+
+See [`cmd/README.md`](cmd/README.md) for installation, syntax, and
+output formats.
 
 ## SDK
 
@@ -32,9 +57,3 @@ The `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, and
 corresponding options are not supplied. `Client` is safe for
 concurrent use. Use `WithHTTPClient` for custom transports and
 `WithRequestRetryPolicy` for per-call retry behavior.
-
-## qgrep CLI
-
-A Cobra-based `qgrep` CLI for asking questions about stdin. See
-[`cmd/README.md`](cmd/README.md) for installation, syntax, and output
-formats.
