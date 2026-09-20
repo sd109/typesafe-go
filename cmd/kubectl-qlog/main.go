@@ -8,18 +8,12 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sd109/typesafe-go/internal/qlog"
 )
 
 func newCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:           "kubectl-qlog [resource...]",
-		Short:         "Ask TypeSafe questions about Kubernetes pod logs",
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		RunE: func(*cobra.Command, []string) error {
-			return fmt.Errorf("kubectl-qlog is not implemented yet")
-		},
-	}
+	return qlog.NewCommand(qlog.CommandDependencies{})
 }
 
 func main() {
